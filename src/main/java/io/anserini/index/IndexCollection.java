@@ -262,6 +262,7 @@ public final class IndexCollection {
     LOG.info("Generator: " + args.generatorClass);
     LOG.info("Threads: " + args.threads);
     LOG.info("Keep stopwords? " + args.keepStopwords);
+    LOG.info("Disable stemming? " + args.disableStemming);
     LOG.info("Store positions? " + args.storePositions);
     LOG.info("Store docvectors? " + args.storeDocvectors);
     LOG.info("Store transformed docs? " + args.storeTransformedDocs);
