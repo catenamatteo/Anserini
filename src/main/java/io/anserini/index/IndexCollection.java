@@ -28,8 +28,10 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.lang3.time.DurationFormatUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.CharArraySet;
 import org.apache.lucene.analysis.en.EnglishAnalyzer;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.index.ConcurrentMergeScheduler;
 import org.apache.lucene.index.IndexWriter;
@@ -98,6 +100,9 @@ public final class IndexCollection {
 
     @Option(name = "-keepStopwords", usage = "boolean switch to keep stopwords")
     public boolean keepStopwords = false;
+    
+    @Option(name = "-disableStemming", usage = "boolean switch to disable stemming")
+    public boolean disableStemming = false;
 
     @Option(name = "-uniqueDocid", usage = "remove duplicated documents with the same doc id when indexing. " +
       "please note that this option may slow the indexing a lot and if you are sure there is no " +
@@ -298,11 +303,15 @@ public final class IndexCollection {
     int numThreads = args.threads;
 
     final Directory dir = FSDirectory.open(indexPath);
-    final EnglishAnalyzer englishAnalyzer= args.keepStopwords ?
-        new EnglishAnalyzer(CharArraySet.EMPTY_SET) : new EnglishAnalyzer();
+    final Analyzer analyzer;
+    if (args.disableStemming) {    	
+    	analyzer= args.keepStopwords ? new StandardAnalyzer(CharArraySet.EMPTY_SET) : new StandardAnalyzer();
+    } else {    	
+    	analyzer= args.keepStopwords ? new EnglishAnalyzer(CharArraySet.EMPTY_SET) : new EnglishAnalyzer();
+    }
     final TweetAnalyzer tweetAnalyzer = new TweetAnalyzer(args.tweetStemming);
     final IndexWriterConfig config = args.collectionClass.equals("TweetCollection") ?
-        new IndexWriterConfig(tweetAnalyzer) : new IndexWriterConfig(englishAnalyzer);
+        new IndexWriterConfig(tweetAnalyzer) : new IndexWriterConfig(analyzer);
     config.setSimilarity(new BM25Similarity());
     config.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
     config.setRAMBufferSizeMB(args.memorybufferSize);
