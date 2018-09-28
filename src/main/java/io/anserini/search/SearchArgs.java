@@ -29,8 +29,11 @@ public class SearchArgs {
   @Option(name = "-output", metaVar = "[file]", required = true, usage = "output file")
   public String output;
 
-  @Option(name = "-topicreader", required = true, usage = "define how to read the topic(query) file: one of [Trec|Webxml]")
+  @Option(name = "-topicreader", required = true, usage = "define how to read the topic(query) file: one of [Trec|Webxml|...]")
   public String topicReader;
+  
+  @Option(name = "-luceneQueryParser", usage = "boolean switch to enable Lucene query parsing")
+  public boolean lucenequeryparser = false;
 
   // optional arguments
   @Option(name = "-topicfield", usage = "Which field of the query should be used, default \"title\"." +
@@ -43,6 +46,9 @@ public class SearchArgs {
 
   @Option(name = "-keepstopwords", usage = "Boolean switch to keep stopwords in the query topics")
   public boolean keepstop = false;
+  
+  @Option(name = "-disableStemming", usage = "boolean switch to disable stemming")
+  public boolean disableStemming = false;
 
   @Option(name = "-arbitraryScoreTieBreak", usage = "Break score ties arbitrarily (not recommended)")
   public boolean arbitraryScoreTieBreak = false;

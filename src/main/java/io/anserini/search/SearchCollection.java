@@ -16,45 +16,8 @@
 
 package io.anserini.search;
 
-import io.anserini.analysis.TweetAnalyzer;
-import io.anserini.index.generator.TweetGenerator;
-import io.anserini.rerank.RerankerCascade;
-import io.anserini.rerank.RerankerContext;
-import io.anserini.rerank.ScoredDocuments;
-
-import io.anserini.rerank.lib.AxiomReranker;
-import io.anserini.rerank.lib.Rm3Reranker;
-import io.anserini.rerank.lib.ScoreTiesAdjusterReranker;
-import io.anserini.search.query.BagOfWordsQueryGenerator;
-import io.anserini.search.query.SdmQueryGenerator;
-import io.anserini.search.similarity.AxiomaticSimilarity;
-import io.anserini.search.similarity.F2ExpSimilarity;
-import io.anserini.search.similarity.F2LogSimilarity;
-import io.anserini.search.topicreader.TopicReader;
-import io.anserini.util.AnalyzerUtils;
-import org.apache.commons.lang3.time.DurationFormatUtils;
-import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
-import org.apache.lucene.analysis.Analyzer;
-import org.apache.lucene.analysis.CharArraySet;
-import org.apache.lucene.analysis.en.EnglishAnalyzer;
-import org.apache.lucene.document.LongPoint;
-import org.apache.lucene.index.DirectoryReader;
-import org.apache.lucene.index.IndexReader;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
-import org.apache.lucene.search.Sort;
-import org.apache.lucene.search.SortField;
-import org.apache.lucene.search.TopDocs;
-import org.apache.lucene.search.similarities.*;
-import org.apache.lucene.store.FSDirectory;
-import org.kohsuke.args4j.CmdLineException;
-import org.kohsuke.args4j.CmdLineParser;
-import org.kohsuke.args4j.OptionHandlerFilter;
-import org.kohsuke.args4j.ParserProperties;
+import static io.anserini.index.generator.LuceneDocumentGenerator.FIELD_BODY;
+import static io.anserini.index.generator.LuceneDocumentGenerator.FIELD_ID;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -69,232 +32,313 @@ import java.util.Map;
 import java.util.SortedMap;
 import java.util.concurrent.TimeUnit;
 
-import static io.anserini.index.generator.LuceneDocumentGenerator.FIELD_BODY;
-import static io.anserini.index.generator.LuceneDocumentGenerator.FIELD_ID;
+import org.apache.commons.lang3.time.DurationFormatUtils;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.CharArraySet;
+import org.apache.lucene.analysis.en.EnglishAnalyzer;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.document.LongPoint;
+import org.apache.lucene.index.DirectoryReader;
+import org.apache.lucene.index.IndexReader;
+import org.apache.lucene.search.BooleanClause;
+import org.apache.lucene.search.BooleanQuery;
+import org.apache.lucene.search.IndexSearcher;
+import org.apache.lucene.search.Query;
+import org.apache.lucene.search.ScoreDoc;
+import org.apache.lucene.search.Sort;
+import org.apache.lucene.search.SortField;
+import org.apache.lucene.search.TopDocs;
+import org.apache.lucene.search.similarities.AfterEffectL;
+import org.apache.lucene.search.similarities.BM25Similarity;
+import org.apache.lucene.search.similarities.BasicModelP;
+import org.apache.lucene.search.similarities.DFRSimilarity;
+import org.apache.lucene.search.similarities.DistributionSPL;
+import org.apache.lucene.search.similarities.IBSimilarity;
+import org.apache.lucene.search.similarities.LMDirichletSimilarity;
+import org.apache.lucene.search.similarities.LambdaDF;
+import org.apache.lucene.search.similarities.NormalizationH2;
+import org.apache.lucene.search.similarities.Similarity;
+import org.apache.lucene.store.FSDirectory;
+import org.kohsuke.args4j.CmdLineException;
+import org.kohsuke.args4j.CmdLineParser;
+import org.kohsuke.args4j.OptionHandlerFilter;
+import org.kohsuke.args4j.ParserProperties;
+
+import io.anserini.analysis.TweetAnalyzer;
+import io.anserini.index.generator.TweetGenerator;
+import io.anserini.rerank.RerankerCascade;
+import io.anserini.rerank.RerankerContext;
+import io.anserini.rerank.ScoredDocuments;
+import io.anserini.rerank.lib.AxiomReranker;
+import io.anserini.rerank.lib.Rm3Reranker;
+import io.anserini.rerank.lib.ScoreTiesAdjusterReranker;
+import io.anserini.search.query.BagOfWordsQueryGenerator;
+import io.anserini.search.query.LuceneQueryGenerator;
+import io.anserini.search.query.SdmQueryGenerator;
+import io.anserini.search.similarity.F2ExpSimilarity;
+import io.anserini.search.similarity.F2LogSimilarity;
+import io.anserini.search.topicreader.TopicReader;
+import io.anserini.util.AnalyzerUtils;
 
 public final class SearchCollection implements Closeable {
-  public static final Sort BREAK_SCORE_TIES_BY_DOCID =
-      new Sort(SortField.FIELD_SCORE, new SortField(FIELD_ID, SortField.Type.STRING_VAL));
-  public static final Sort BREAK_SCORE_TIES_BY_TWEETID =
-      new Sort(SortField.FIELD_SCORE,
-          new SortField(TweetGenerator.StatusField.ID_LONG.name, SortField.Type.LONG, true));
+	public static final Sort BREAK_SCORE_TIES_BY_DOCID = new Sort(SortField.FIELD_SCORE,
+			new SortField(FIELD_ID, SortField.Type.STRING_VAL));
+	public static final Sort BREAK_SCORE_TIES_BY_TWEETID = new Sort(SortField.FIELD_SCORE,
+			new SortField(TweetGenerator.StatusField.ID_LONG.name, SortField.Type.LONG, true));
 
-  private static final Logger LOG = LogManager.getLogger(SearchCollection.class);
+	private static final Logger LOG = LogManager.getLogger(SearchCollection.class);
 
-  private final SearchArgs args;
-  private final IndexReader reader;
-  private final Similarity similarity;
-  private final Analyzer analyzer;
-  private final boolean isRerank;
-  private final RerankerCascade cascade;
+	private final SearchArgs args;
+	private final IndexReader reader;
+	private final Similarity similarity;
+	private final Analyzer analyzer;
+	private final boolean isRerank;
+	private final RerankerCascade cascade;
 
-  enum QueryConstructor {
-    BagOfTerms,
-    SequentialDependenceModel
-  }
-  
-  private final QueryConstructor qc;
+	enum QueryConstructor {
+		BagOfTerms, SequentialDependenceModel, Lucene
+	}
 
-  public SearchCollection(SearchArgs args) throws IOException {
-    this.args = args;
-    Path indexPath = Paths.get(args.index);
+	private final QueryConstructor qc;
 
-    if (!Files.exists(indexPath) || !Files.isDirectory(indexPath) || !Files.isReadable(indexPath)) {
-      throw new IllegalArgumentException(args.index + " does not exist or is not a directory.");
-    }
+	public SearchCollection(SearchArgs args) throws IOException {
+		this.args = args;
+		Path indexPath = Paths.get(args.index);
 
-    LOG.info("Reading index at " + args.index);
-    this.reader = DirectoryReader.open(FSDirectory.open(indexPath));
+		if (!Files.exists(indexPath) || !Files.isDirectory(indexPath) || !Files.isReadable(indexPath)) {
+			throw new IllegalArgumentException(args.index + " does not exist or is not a directory.");
+		}
 
-    // Figure out which scoring model to use.
-    if (args.ql) {
-      LOG.info("Using QL scoring model");
-      this.similarity = new LMDirichletSimilarity(args.mu);
-    } else if (args.bm25) {
-      LOG.info("Using BM25 scoring model");
-      this.similarity = new BM25Similarity(args.k1, args.b);
-    } else if (args.pl2) {
-      LOG.info("Using PL2 scoring model");
-      this.similarity = new DFRSimilarity(new BasicModelP(), new AfterEffectL(), new NormalizationH2(args.pl2_c));
-    } else if (args.spl) {
-      LOG.info("Using SPL scoring model");
-      this.similarity = new IBSimilarity(new DistributionSPL(), new LambdaDF(),  new NormalizationH2(args.spl_c));
-    } else if (args.f2exp) {
-      LOG.info("Using F2Exp scoring model");
-      this.similarity = new F2ExpSimilarity(args.f2exp_s);
-    } else if (args.f2log) {
-      LOG.info("Using F2Log scoring model");
-      this.similarity = new F2LogSimilarity(args.f2log_s);
-    } else {
-      throw new IllegalArgumentException("Error: Must specify scoring model!");
-    }
+		LOG.info("Reading index at " + args.index);
+		this.reader = DirectoryReader.open(FSDirectory.open(indexPath));
 
-    // Are we searching tweets?
-    if (args.searchtweets) {
-      LOG.info("Search Tweets");
-      analyzer = new TweetAnalyzer();
-    } else {
-      analyzer = args.keepstop ? new EnglishAnalyzer(CharArraySet.EMPTY_SET) : new EnglishAnalyzer();
-    }
+		// Figure out which scoring model to use.
+		if (args.ql) {
+			LOG.info("Using QL scoring model");
+			this.similarity = new LMDirichletSimilarity(args.mu);
+		} else if (args.bm25) {
+			LOG.info("Using BM25 scoring model");
+			this.similarity = new BM25Similarity(args.k1, args.b);
+		} else if (args.pl2) {
+			LOG.info("Using PL2 scoring model");
+			this.similarity = new DFRSimilarity(new BasicModelP(), new AfterEffectL(), new NormalizationH2(args.pl2_c));
+		} else if (args.spl) {
+			LOG.info("Using SPL scoring model");
+			this.similarity = new IBSimilarity(new DistributionSPL(), new LambdaDF(), new NormalizationH2(args.spl_c));
+		} else if (args.f2exp) {
+			LOG.info("Using F2Exp scoring model");
+			this.similarity = new F2ExpSimilarity(args.f2exp_s);
+		} else if (args.f2log) {
+			LOG.info("Using F2Log scoring model");
+			this.similarity = new F2LogSimilarity(args.f2log_s);
+		} else {
+			throw new IllegalArgumentException("Error: Must specify scoring model!");
+		}
 
-    if (args.sdm) {
-      LOG.info("Use Sequential Dependence Model query");
-      qc = QueryConstructor.SequentialDependenceModel;
-    } else {
-      LOG.info("Use Bag of Terms query");
-      qc = QueryConstructor.BagOfTerms;
-    }
+		// Are we searching tweets?
+		if (args.searchtweets) {
+			LOG.info("Search Tweets");
+			analyzer = new TweetAnalyzer();
+		} else {
 
-    isRerank = args.rm3 || args.axiom;
+			if (args.disableStemming) {
 
-    // Set up the ranking cascade.
-    cascade = new RerankerCascade();
-    if (args.rm3) {
-      LOG.info("Rerank with RM3");
-      cascade.add(new Rm3Reranker(analyzer, FIELD_BODY, args));
-    } else if (args.axiom) {
-      LOG.info("Rerank with Axiomatic Reranking");
-      cascade.add(new AxiomReranker(FIELD_BODY, args));
-    }
+				analyzer = args.keepstop ? new StandardAnalyzer(CharArraySet.EMPTY_SET) : new StandardAnalyzer();
 
-    cascade.add(new ScoreTiesAdjusterReranker());
-  }
+			} else {
 
-  @Override
-  public void close() throws IOException {
-    reader.close();
-  }
+				analyzer = args.keepstop ? new EnglishAnalyzer(CharArraySet.EMPTY_SET) : new EnglishAnalyzer();
+			}
+		}
 
-  @SuppressWarnings("unchecked")
-  public<K> int runTopics() throws IOException {
-    IndexSearcher searcher = new IndexSearcher(reader);
-    searcher.setSimilarity(similarity);
+		if (args.sdm) {
+			LOG.info("Use Sequential Dependence Model query");
+			qc = QueryConstructor.SequentialDependenceModel;
+		} else {
+			if (args.lucenequeryparser) {
 
-    Path topicsFile = Paths.get(args.topics);
+				LOG.info("Use Lucene query syntax");
+				qc = QueryConstructor.Lucene;
 
-    if (!Files.exists(topicsFile) || !Files.isRegularFile(topicsFile) || !Files.isReadable(topicsFile)) {
-      throw new IllegalArgumentException("Topics file : " + topicsFile + " does not exist or is not a (readable) file.");
-    }
+			} else {
 
-    TopicReader<K> tr;
-    SortedMap<K, Map<String, String>> topics;
-    try {
-      tr = (TopicReader<K>) Class.forName("io.anserini.search.topicreader." + args.topicReader + "TopicReader")
-          .getConstructor(Path.class).newInstance(topicsFile);
-      topics = tr.read();
-    } catch (Exception e) {
-      throw new IllegalArgumentException("Unable to load topic reader: " + args.topicReader);
-    }
+				LOG.info("Use Bag of Terms query");
+				qc = QueryConstructor.BagOfTerms;
+			}
+		}
 
-    final String runTag = args.runtag == null ? "Anserini" : args.runtag;
+		isRerank = args.rm3 || args.axiom;
 
-    PrintWriter out = new PrintWriter(Files.newBufferedWriter(Paths.get(args.output), StandardCharsets.US_ASCII));
+		// Set up the ranking cascade.
+		cascade = new RerankerCascade();
+		if (args.rm3) {
+			LOG.info("Rerank with RM3");
+			cascade.add(new Rm3Reranker(analyzer, FIELD_BODY, args));
+		} else if (args.axiom) {
+			LOG.info("Rerank with Axiomatic Reranking");
+			cascade.add(new AxiomReranker(FIELD_BODY, args));
+		}
 
-    for (Map.Entry<K, Map<String, String>> entry : topics.entrySet()) {
-      K qid = entry.getKey();
-      String queryString = entry.getValue().get(args.topicfield);
+		cascade.add(new ScoreTiesAdjusterReranker());
+	}
 
-      ScoredDocuments docs;
-      if (args.searchtweets) {
-        docs = searchTweets(searcher, qid, queryString, Long.parseLong(entry.getValue().get("time")));
-      } else{
-        docs = search(searcher, qid, queryString);
-      }
+	@Override
+	public void close() throws IOException {
+		reader.close();
+	}
 
-      /**
-       * the first column is the topic number.
-       * the second column is currently unused and should always be "Q0".
-       * the third column is the official document identifier of the retrieved document.
-       * the fourth column is the rank the document is retrieved.
-       * the fifth column shows the score (integer or floating point) that generated the ranking.
-       * the sixth column is called the "run tag" and should be a unique identifier for your
-       */
-      for (int i = 0; i < docs.documents.length; i++) {
-        out.println(String.format(Locale.US, "%s Q0 %s %d %f %s", qid,
-            docs.documents[i].getField(FIELD_ID).stringValue(), (i + 1), docs.scores[i], runTag));
-      }
-    }
-    out.flush();
-    out.close();
+	@SuppressWarnings("unchecked")
+	public <K> int runTopics() throws IOException {
+		IndexSearcher searcher = new IndexSearcher(reader);
+		searcher.setSimilarity(similarity);
 
-    return topics.size();
-  }
+		Path topicsFile = Paths.get(args.topics);
 
-  public<K> ScoredDocuments search(IndexSearcher searcher, K qid, String queryString) throws IOException {
-    Query query;
-    if (qc == QueryConstructor.SequentialDependenceModel) {
-      query = new SdmQueryGenerator(args.sdm_tw, args.sdm_ow, args.sdm_uw).buildQuery(FIELD_BODY, analyzer, queryString);
-    } else {
-      query = new BagOfWordsQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
-    }
+		if (!Files.exists(topicsFile) || !Files.isRegularFile(topicsFile) || !Files.isReadable(topicsFile)) {
+			throw new IllegalArgumentException(
+					"Topics file : " + topicsFile + " does not exist or is not a (readable) file.");
+		}
 
-    TopDocs rs = new TopDocs(0, new ScoreDoc[]{}, Float.NaN);
-    if (!(isRerank && args.rerankcutoff <= 0)) {
-      if (args.arbitraryScoreTieBreak) {// Figure out how to break the scoring ties.
-        rs = searcher.search(query, isRerank ? args.rerankcutoff : args.hits);
-      } else {
-        rs = searcher.search(query, isRerank ? args.rerankcutoff : args.hits, BREAK_SCORE_TIES_BY_DOCID, true, true);
-      }
-    }
+		TopicReader<K> tr;
+		SortedMap<K, Map<String, String>> topics;
+		try {
+			tr = (TopicReader<K>) Class.forName("io.anserini.search.topicreader." + args.topicReader + "TopicReader")
+					.getConstructor(Path.class).newInstance(topicsFile);
+			topics = tr.read();
+		} catch (Exception e) {
+			throw new IllegalArgumentException("Unable to load topic reader: " + args.topicReader);
+		}
 
-    List<String> queryTokens = AnalyzerUtils.tokenize(analyzer, queryString);
-    RerankerContext context = new RerankerContext<>(searcher, qid, query, queryString, queryTokens, null, args);
+		final String runTag = args.runtag == null ? "Anserini" : args.runtag;
 
-    return cascade.run(ScoredDocuments.fromTopDocs(rs, searcher), context);
-  }
+		PrintWriter out = new PrintWriter(Files.newBufferedWriter(Paths.get(args.output), StandardCharsets.US_ASCII));
 
-  public<K> ScoredDocuments searchTweets(IndexSearcher searcher, K qid, String queryString, long t) throws IOException {
-    Query keywordQuery;
-    if (qc == QueryConstructor.SequentialDependenceModel) {
-      keywordQuery = new SdmQueryGenerator(args.sdm_tw, args.sdm_ow, args.sdm_uw).buildQuery(FIELD_BODY, analyzer, queryString);
-    } else {
-      keywordQuery = new BagOfWordsQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
-    }
-    List<String> queryTokens = AnalyzerUtils.tokenize(analyzer, queryString);
+		for (Map.Entry<K, Map<String, String>> entry : topics.entrySet()) {
+			K qid = entry.getKey();
+			String queryString = entry.getValue().get(args.topicfield);
 
-    // Do not consider the tweets with tweet ids that are beyond the queryTweetTime
-    // <querytweettime> tag contains the timestamp of the query in terms of the
-    // chronologically nearest tweet id within the corpus
-    Query filter = LongPoint.newRangeQuery(TweetGenerator.StatusField.ID_LONG.name, 0L, t);
-    BooleanQuery.Builder builder = new BooleanQuery.Builder();
-    builder.add(filter, BooleanClause.Occur.FILTER);
-    builder.add(keywordQuery, BooleanClause.Occur.MUST);
-    Query compositeQuery = builder.build();
+			ScoredDocuments docs;
+			if (args.searchtweets) {
+				docs = searchTweets(searcher, qid, queryString, Long.parseLong(entry.getValue().get("time")));
+			} else {
+				docs = search(searcher, qid, queryString);
+			}
 
+			/**
+			 * the first column is the topic number. the second column is currently unused
+			 * and should always be "Q0". the third column is the official document
+			 * identifier of the retrieved document. the fourth column is the rank the
+			 * document is retrieved. the fifth column shows the score (integer or floating
+			 * point) that generated the ranking. the sixth column is called the "run tag"
+			 * and should be a unique identifier for your
+			 */
+			for (int i = 0; i < docs.documents.length; i++) {
+				out.println(String.format(Locale.US, "%s Q0 %s %d %f %s", qid,
+						docs.documents[i].getField(FIELD_ID).stringValue(), (i + 1), docs.scores[i], runTag));
+			}
+		}
+		out.flush();
+		out.close();
 
-    TopDocs rs = new TopDocs(0, new ScoreDoc[]{}, Float.NaN);
-    if (!(isRerank && args.rerankcutoff <= 0)) {
-      if (args.arbitraryScoreTieBreak) {// Figure out how to break the scoring ties.
-        rs = searcher.search(compositeQuery, isRerank ? args.rerankcutoff : args.hits);
-      } else {
-        rs = searcher.search(compositeQuery, isRerank ? args.rerankcutoff : args.hits, BREAK_SCORE_TIES_BY_TWEETID, true, true);
-      }
-    }
+		return topics.size();
+	}
 
-    RerankerContext context = new RerankerContext<>(searcher, qid, keywordQuery, queryString, queryTokens, filter, args);
+	public <K> ScoredDocuments search(IndexSearcher searcher, K qid, String queryString) throws IOException {
+		Query query;
+		switch (qc) {
+		default:
+		case BagOfTerms:
+			query = new BagOfWordsQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
+			break;
+		case Lucene:
+			query = new LuceneQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
+			break;
+		case SequentialDependenceModel:
+			query = new SdmQueryGenerator(args.sdm_tw, args.sdm_ow, args.sdm_uw).buildQuery(FIELD_BODY, analyzer,
+					queryString);
+			break;
+		}
+		TopDocs rs = new TopDocs(0, new ScoreDoc[] {}, Float.NaN);
+		if (!(isRerank && args.rerankcutoff <= 0)) {
+			if (args.arbitraryScoreTieBreak) {// Figure out how to break the scoring ties.
+				rs = searcher.search(query, isRerank ? args.rerankcutoff : args.hits);
+			} else {
+				rs = searcher.search(query, isRerank ? args.rerankcutoff : args.hits, BREAK_SCORE_TIES_BY_DOCID, true,
+						true);
+			}
+		}
 
-    return cascade.run(ScoredDocuments.fromTopDocs(rs, searcher), context);
-  }
+		List<String> queryTokens = AnalyzerUtils.tokenize(analyzer, queryString);
+		RerankerContext context = new RerankerContext<>(searcher, qid, query, queryString, queryTokens, null, args);
 
-  public static void main(String[] args) throws Exception {
-    SearchArgs searchArgs = new SearchArgs();
-    CmdLineParser parser = new CmdLineParser(searchArgs, ParserProperties.defaults().withUsageWidth(90));
+		return cascade.run(ScoredDocuments.fromTopDocs(rs, searcher), context);
+	}
 
-    try {
-      parser.parseArgument(args);
-    } catch (CmdLineException e) {
-      System.err.println(e.getMessage());
-      parser.printUsage(System.err);
-      System.err.println("Example: SearchCollection" + parser.printExample(OptionHandlerFilter.REQUIRED));
-      return;
-    }
+	public <K> ScoredDocuments searchTweets(IndexSearcher searcher, K qid, String queryString, long t)
+			throws IOException {
+		Query keywordQuery;
+		switch (qc) {
+		default:
+		case BagOfTerms:
+			keywordQuery = new BagOfWordsQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
+			break;
+		case Lucene:
+			keywordQuery = new LuceneQueryGenerator().buildQuery(FIELD_BODY, analyzer, queryString);
+			break;
+		case SequentialDependenceModel:
+			keywordQuery = new SdmQueryGenerator(args.sdm_tw, args.sdm_ow, args.sdm_uw).buildQuery(FIELD_BODY, analyzer,
+					queryString);
+			break;
+		}
 
-    final long start = System.nanoTime();
-    SearchCollection searcher = new SearchCollection(searchArgs);
-    int numTopics = searcher.runTopics();
-    searcher.close();
-    final long durationMillis = TimeUnit.MILLISECONDS.convert(System.nanoTime() - start, TimeUnit.NANOSECONDS);
-    LOG.info("Total " + numTopics + " topics searched in "
-        + DurationFormatUtils.formatDuration(durationMillis, "HH:mm:ss"));
-  }
+		List<String> queryTokens = AnalyzerUtils.tokenize(analyzer, queryString);
+
+		// Do not consider the tweets with tweet ids that are beyond the queryTweetTime
+		// <querytweettime> tag contains the timestamp of the query in terms of the
+		// chronologically nearest tweet id within the corpus
+		Query filter = LongPoint.newRangeQuery(TweetGenerator.StatusField.ID_LONG.name, 0L, t);
+		BooleanQuery.Builder builder = new BooleanQuery.Builder();
+		builder.add(filter, BooleanClause.Occur.FILTER);
+		builder.add(keywordQuery, BooleanClause.Occur.MUST);
+		Query compositeQuery = builder.build();
+
+		TopDocs rs = new TopDocs(0, new ScoreDoc[] {}, Float.NaN);
+		if (!(isRerank && args.rerankcutoff <= 0)) {
+			if (args.arbitraryScoreTieBreak) {// Figure out how to break the scoring ties.
+				rs = searcher.search(compositeQuery, isRerank ? args.rerankcutoff : args.hits);
+			} else {
+				rs = searcher.search(compositeQuery, isRerank ? args.rerankcutoff : args.hits,
+						BREAK_SCORE_TIES_BY_TWEETID, true, true);
+			}
+		}
+
+		RerankerContext context = new RerankerContext<>(searcher, qid, keywordQuery, queryString, queryTokens, filter,
+				args);
+
+		return cascade.run(ScoredDocuments.fromTopDocs(rs, searcher), context);
+	}
+
+	public static void main(String[] args) throws Exception {
+		SearchArgs searchArgs = new SearchArgs();
+		CmdLineParser parser = new CmdLineParser(searchArgs, ParserProperties.defaults().withUsageWidth(90));
+
+		try {
+			parser.parseArgument(args);
+		} catch (CmdLineException e) {
+			System.err.println(e.getMessage());
+			parser.printUsage(System.err);
+			System.err.println("Example: SearchCollection" + parser.printExample(OptionHandlerFilter.REQUIRED));
+			return;
+		}
+
+		final long start = System.nanoTime();
+		SearchCollection searcher = new SearchCollection(searchArgs);
+		int numTopics = searcher.runTopics();
+		searcher.close();
+		final long durationMillis = TimeUnit.MILLISECONDS.convert(System.nanoTime() - start, TimeUnit.NANOSECONDS);
+		LOG.info("Total " + numTopics + " topics searched in "
+				+ DurationFormatUtils.formatDuration(durationMillis, "HH:mm:ss"));
+	}
 }
