@@ -208,6 +208,7 @@ public final class SearchCollection implements Closeable {
 					.getConstructor(Path.class).newInstance(topicsFile);
 			topics = tr.read();
 		} catch (Exception e) {
+			LOG.error(e);
 			throw new IllegalArgumentException("Unable to load topic reader: " + args.topicReader);
 		}
 
