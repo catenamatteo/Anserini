@@ -60,7 +60,7 @@ import org.apache.lucene.search.similarities.LMDirichletSimilarity;
 import org.apache.lucene.search.similarities.LambdaDF;
 import org.apache.lucene.search.similarities.NormalizationH2;
 import org.apache.lucene.search.similarities.Similarity;
-import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.MMapDirectory;
 import org.kohsuke.args4j.CmdLineException;
 import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.OptionHandlerFilter;
@@ -112,7 +112,7 @@ public final class SearchCollection implements Closeable {
 		}
 
 		LOG.info("Reading index at " + args.index);
-		this.reader = DirectoryReader.open(FSDirectory.open(indexPath));
+		this.reader = DirectoryReader.open(MMapDirectory.open(indexPath));
 
 		// Figure out which scoring model to use.
 		if (args.ql) {
@@ -261,6 +261,9 @@ public final class SearchCollection implements Closeable {
 					queryString);
 			break;
 		}
+		
+		LOG.info("Processing qid:"+qid+", "+query.toString());
+		
 		TopDocs rs = new TopDocs(0, new ScoreDoc[] {}, Float.NaN);
 		if (!(isRerank && args.rerankcutoff <= 0)) {
 			if (args.arbitraryScoreTieBreak) {// Figure out how to break the scoring ties.
@@ -270,7 +273,9 @@ public final class SearchCollection implements Closeable {
 						true);
 			}
 		}
-
+		LOG.info("Result(s) for qid:"+qid+", "+rs.totalHits+" found"); 
+		
+		
 		List<String> queryTokens = AnalyzerUtils.tokenize(analyzer, queryString);
 		RerankerContext context = new RerankerContext<>(searcher, qid, query, queryString, queryTokens, null, args);
 

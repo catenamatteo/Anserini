@@ -33,6 +33,7 @@ import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.search.similarities.LMDirichletSimilarity;
 import org.apache.lucene.search.similarities.Similarity;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.store.MMapDirectory;
 
 import java.io.Closeable;
 import java.io.IOException;
@@ -67,7 +68,7 @@ public class SimpleSearcher implements Closeable {
       throw new IllegalArgumentException(indexDir + " does not exist or is not a directory.");
     }
 
-    this.reader = DirectoryReader.open(FSDirectory.open(indexPath));
+    this.reader = DirectoryReader.open(MMapDirectory.open(indexPath));
     this.similarity = new LMDirichletSimilarity(1000.0f);
     this.analyzer = new EnglishAnalyzer();
   }
